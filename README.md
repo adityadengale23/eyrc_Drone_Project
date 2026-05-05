@@ -65,12 +65,16 @@ This highlights the integration between visual input and control logic, where th
 
 ## 📦 Hardware Kit Received
 <img width="1600" height="892" alt="image" src="https://github.com/user-attachments/assets/d37b7184-1f25-408d-a4ce-2ce350852b49" />
+
 ## 🛠️ Setup & Development
 <img width="1920" height="1200" alt="image" src="https://github.com/user-attachments/assets/92138870-7ace-467a-9258-9f6128425172" />
+
 ## Hardware Kit Photo
 <img width="1280" height="775" alt="image" src="https://github.com/user-attachments/assets/5921f20f-4350-4e97-949a-0453d0f20164" />
+
 ## Work in progress
 <img width="1130" height="708" alt="Screenshot 2026-05-05 212610" src="https://github.com/user-attachments/assets/997be78a-f495-4859-9fda-f1a22468a7b2" />
+
 
 <img width="814" height="563" alt="setup" src="https://github.com/user-attachments/assets/829a604b-21c1-454e-8a7d-c9c74e5db7c5" />
 
