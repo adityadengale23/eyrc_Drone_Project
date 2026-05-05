@@ -76,6 +76,8 @@ This highlights the integration between visual input and control logic, where th
 <img width="1130" height="708" alt="Screenshot 2026-05-05 212610" src="https://github.com/user-attachments/assets/997be78a-f495-4859-9fda-f1a22468a7b2" />
 
 
+
+
 <img width="814" height="563" alt="setup" src="https://github.com/user-attachments/assets/829a604b-21c1-454e-8a7d-c9c74e5db7c5" />
 
 ## 🚀 Learning Outcomes
