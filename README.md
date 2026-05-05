@@ -8,6 +8,7 @@ This project was developed as part of the eYantra Robotics Competition (eYRC) co
 Our team was selected among the Top 50 teams across India, through which we received an autonomous drone hardware kit.
 
 We designed and implemented an autonomous drone system capable of performing tasks with minimal human intervention, focusing on smart agriculture applications.
+__________________________________________________________________
 ## 🤖 About eYantra
 
 eYantra is a robotics initiative by IIT Bombay that promotes learning through hands-on projects in embedded systems and robotics.
@@ -28,6 +29,7 @@ Using image processing techniques, the system analyzes crop conditions to detect
 This method reduces unnecessary chemical usage, protects healthy crops, and increases overall farming efficiency by applying a precise and controlled approach.
 
 To develop this system, we integrated multiple technologies including ROS 2, Gazebo simulation, PID-based control systems for drone stability, and Git/GitHub for version control and collaboration.
+______________
 ## 🧠 Technologies Used
 - ROS 2
 - Gazebo Simulation
