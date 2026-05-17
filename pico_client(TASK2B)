@@ -1,0 +1,294 @@
+#!/usr/bin/env python3
+
+import time
+import rclpy
+from rclpy.action import ActionClient
+from rclpy.node import Node
+from rclpy.action.client import ClientGoalHandle
+#import the action and service
+from waypoint_navigation.action import NavToWaypoint
+from waypoint_navigation.srv import GetWaypoints
+from sensor_msgs.msg import Image
+from cv_bridge import CvBridge
+import cv2  
+import numpy as np 
+class WayPointClient(Node):
+
+    def __init__(self):
+        super().__init__('waypoint_client')
+        self.goals = []
+        self.goal_index = 0
+        self.image_processed = False
+        #create an action client for the action 'NavToWaypoint'. Refer to Writing an action server and client (Python) in ROS 2 tutorials
+        #action name should 'waypoint_navigation'.
+        self.action_client = ActionClient(self,NavToWaypoint,"waypoint_navigation")
+        
+        #create a client for the service 'GetWaypoints'. Refer to Writing a simple service and client (Python) in ROS 2 tutorials
+        #service name should be 'waypoints'
+        self.cli = self.create_client(GetWaypoints,'waypoints')
+
+        while not self.cli.wait_for_service(timeout_sec=1.0):
+            self.get_logger().info('service not available, waiting again...')
+
+        #create a request object for GetWaypoints service.
+        self.req = GetWaypoints.Request()
+
+        #image subscriber
+        self.subscription = self.create_subscription(
+            Image,
+            '/image_raw',
+            self.listener_callback,
+            10)
+        self.br = CvBridge()
+
+    # #image converstion to cv2 function
+    def listener_callback(self, data):
+        self.get_logger().info('Receiving video frame')
+        current_frame = self.br.imgmsg_to_cv2(data, desired_encoding='bgr8')
+        # cv2.imshow("camera", current_frame)
+
+        #clockwise 90 degree 
+        rotated= cv2.rotate(current_frame,cv2.ROTATE_90_CLOCKWISE) 
+        # cv2.imshow("rotated",rotated)
+        #converting to grayscale
+        gray = cv2.cvtColor(rotated, cv2.COLOR_BGR2GRAY)
+        # cv2.imshow("gray",gray)
+        #entering co-ordinates of plants 
+        block_1 = {
+        ((4.39, 8.98, 29.29), (4.5, 8.88, 30.59)) : (54, 55),   #P1A((Hover (Plants) Positions),(Pesticide Application (Pickup) Positions))
+        ((6.45, 8.79, 28.67), (6.85, 8.89, 30.62)) : (48, 110), #P1B
+        ((8.62, 8.80, 28.69), (9.13, 8.80, 30.40)) : (50, 187), #P1C
+        ((4.37, 4.57, 29.19), (4.53, 4.57, 30.79)) : (176, 55), #P1D
+        ((6.76, 4.49, 28.77), (6.45, 4.57, 30.79)) : (180, 123),#P1E
+        ((8.7, 4.53, 28.97),  (9.1, 4.53, 28.97)) : (176, 181)  #P1F
+        }
+
+        block_2 = {
+        ((4.43, -4.30, 29.74),(4.43, -4.30, 31.1)) : (54, 55),   #P2A((Hover (Plants) Positions),(Pesticide Application (Pickup) Positions))
+        ((6.68, -4.30, 29.74),(7.05, -4.30, 31.52)) : (48, 110), #P2B
+        ((8.93, -4.30, 29.74),(9.32, -4.30, 31.06)) : (50, 187), #P2C
+        ((4.58, -8.78, 30.62),(4.53, -8.59, 30.76)) : (176, 55), #P2D
+        ((6.76, -8.61, 30.03),(7.05, -8.81, 31.52)) : (180, 123),#P2E
+        ((9.17, -8.61, 30.03),(9.08, -8.92, 31.93)) : (176, 181) #P2F
+        } 
+        #detecting aruco marke)r 
+        aruco_dict = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_4X4_100)
+        parameters = cv2.aruco.DetectorParameters()
+        corners,ids,rejected = cv2.aruco.detectMarkers(gray,aruco_dict,parameters=parameters)
+
+        if ids is not None:
+            ids_list = ids.flatten()
+            self.get_logger().info(f"Detected marker IDs: {ids_list}")
+            # print("Detected marker ID:" , ids_list)
+            cv2.aruco.drawDetectedMarkers(rotated, corners, ids)
+            # cv2.imshow("Detected Markers",rotated)
+        else:
+            self.get_logger().info("No markers Detected")
+            print("No markers detected")
+
+        #find plant ID
+        def detect_infected_plants(mask, plant_position):
+            infected_ids = []
+            contours, _=cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            #contours
+            for cnt in contours:
+                M = cv2.moments(cnt)
+                if M['m00'] != 0 :
+                    cx = int(M['m10']/M['m00'])
+                    cy = int(M['m01']/M['m00'])
+                    nearest_id = None
+                    min_dist = float('inf')
+                    for pid,(px,py) in plant_position.items():
+                        dist = (px - cx)**2 + (py - cy)**2
+                        if dist< min_dist:
+                            min_dist = dist
+                            nearest_id = pid
+                    infected_ids.append(nearest_id)
+            return infected_ids
+        
+        #sorting aruco markers 
+        if ids is not None and len(ids) == 4:
+
+            ids = ids.flatten()
+            #sorted in ascending order
+            sorted_indices = np.argsort(ids)
+            sorted_ids = ids[sorted_indices]
+            sorted_corners=[corners[i] for i in sorted_indices]
+
+            #Drawing detected markers in sorted order
+            cv2.aruco.drawDetectedMarkers(rotated, sorted_corners,sorted_ids)
+
+            #corners of markers
+            src_pts = np.array([
+                sorted_corners[0][0][0], #top-left corner of first marker
+                sorted_corners[1][0][1], #top-right corner of second marker
+                sorted_corners[2][0][2], #bottom-right corner of thirf marker
+                sorted_corners[3][0][3], #bottom-left corner of fourth marker
+            ], dtype = 'float32')
+ 
+            #calculating widht and height
+            widthA = np.linalg.norm(src_pts[0] - src_pts[1])
+            widthB = np.linalg.norm(src_pts[2] - src_pts[3])
+            width = int(max(widthA, widthB))
+            #height
+            heightA = np.linalg.norm(src_pts[0]- src_pts[3])
+            heightB = np.linalg.norm(src_pts[1]- src_pts[2])
+            height = int(max(heightA,heightB))
+
+
+            dst_pts = np.array([
+                [0,0],
+                [width-1,0],
+                [width-1, height-1],
+                [0, height-1] 
+            ], dtype='float32')
+
+            #persepective transofrm
+            M = cv2.getPerspectiveTransform(src_pts,dst_pts)
+            #warpping rotated image
+            warped= cv2.warpPerspective(rotated, M, (width, height))
+            # cv2.imshow("warped",warped)
+
+            # if not hasattr(self, 'points'):
+            #     self.points = []
+
+            # def click_event(event, x, y, flags, param):
+            #     if event == cv2.EVENT_LBUTTONDOWN:  # Left mouse button click
+            #         self.points.append((x, y))
+            #         print(f"Point clicked: ({x}, {y})")
+
+            # cv2.setMouseCallback('warped', click_event)
+            # print("Points clicked:", self.points)
+             
+            #separating region of interest(ROI)
+            Block_1 = warped[452:684, 74:306]
+            Block_2 = warped[452:684, 452:682]
+            # cv2.imshow("block_1",Block_1)
+            # cv2.imshow("block_2",Block_2)
+            #coverting to hsv
+            hsv1= cv2.cvtColor(Block_1, cv2.COLOR_BGR2HSV)#Block 1
+            hsv2= cv2.cvtColor(Block_2, cv2.COLOR_BGR2HSV)#Block 2
+            
+            #Hihest and lowest hsv values of infected plant
+            lower_value = np.array([21, 230,7])
+            higher_value = np.array([23, 255, 125])
+
+            #masking infected plants
+            mask1 = cv2.inRange(hsv1, lower_value, higher_value)
+            mask2 = cv2.inRange(hsv2, lower_value, higher_value)
+            # cv2.imshow("mask1",mask1)
+            # cv2.imshow("mask2",mask2)
+            #detect infected plants
+            infected_block1 = detect_infected_plants(mask1,block_1)
+            infected_block2 = detect_infected_plants(mask2,block_2)
+
+            # if infected_block1: 
+            #     print(f"Plant1 at coordinates: {infected_block1}")
+
+            # unique_infected_block2 = set(infected_block2)
+            # if infected_block2: 
+            #     print(f"Plant2 at coordinates: {unique_infected_block2}")
+
+        cv2.waitKey(1)
+
+    ###action client functions
+
+    def send_goal(self, waypoint):
+
+        #create a NavToWaypoint goal object.
+        goal_msg = NavToWaypoint.Goal()
+
+        goal_msg.waypoint.position.x = waypoint[0]
+        goal_msg.waypoint.position.y = waypoint[1]
+        goal_msg.waypoint.position.z = waypoint[2]
+
+        #create a method waits for the action server to be available.
+        self.action_client.wait_for_server()
+
+        self.send_goal_future = self.action_client.send_goal_async(goal_msg, feedback_callback=self.feedback_callback)    
+        self.send_goal_future.add_done_callback(self.goal_response_callback)
+
+    def goal_response_callback(self, future):
+
+        #complete the goal_response_callback. Refer to Writing an action server and client (Python) in ROS 2 tutorials
+        self.goal_handle_ = future.result() 
+        if self.goal_handle_.accepted:
+            self.goal_handle_.get_result_async().add_done_callback(self.get_result_callback)
+        
+
+    def get_result_callback(self, future):
+
+        #complete the missing line
+        result = future.result().result
+        self.get_logger().info('Result: {0}'.format(result.hov_time))
+
+        self.goal_index += 1
+
+        if self.goal_index < len(self.goals):
+            self.send_goal(self.goals[self.goal_index])
+        else:
+            self.get_logger().info('All waypoints have been reached successfully')      
+
+    def feedback_callback(self, feedback_msg):
+
+        #complete the missing line
+        feedback = feedback_msg.feedback
+        x = feedback.current_waypoint.pose.position.x
+        y = feedback.current_waypoint.pose.position.y
+        z = feedback.current_waypoint.pose.position.z
+        t = feedback.current_waypoint.header.stamp.sec
+        self.get_logger().info(f'Received feedback! The current whycon position is: {x}, {y}, {z}')
+        self.get_logger().info(f'Max time inside sphere: {t}')
+
+
+    # #service client functions
+
+    def send_request(self):
+        #  complete send_request method, which will send the request and return a future
+        self.req.get_waypoints = True 
+        future = self.cli.call_async(self.req)
+        return future 
+
+    def receive_goals(self):
+        future = self.send_request()
+        #write a statement to execute the service until the future is complete
+        rclpy.spin_until_future_complete(self,future)
+
+        # while not self.image_processed:
+        #     rclpy.spin_once(self)
+
+        if future.result() is None:
+            self.get_logger().error('Failed to get waypoints from service')
+            return
+        
+        response = future.result()
+        self.get_logger().info('Waypoints received by the action client')
+
+        for pose in response.waypoints.poses:
+            waypoints = [pose.position.x, pose.position.y, pose.position.z]
+            self.goals.append(waypoints)
+            self.get_logger().info(f'Waypoints: {waypoints}')
+
+        self.send_goal(self.goals[0])
+    
+
+def main(args=None):
+    rclpy.init(args=args)
+
+    waypoint_client = WayPointClient()
+    waypoint_client.receive_goals()
+    
+    try:
+        rclpy.spin(waypoint_client)
+    except KeyboardInterrupt:
+        waypoint_client.get_logger().info('KeyboardInterrupt, shutting down.\n')
+    finally:
+        waypoint_client.destroy_node()
+        rclpy.shutdown()
+    
+    rclpy.shutdown()
+
+
+if __name__ == '__main__':
+    main()
+      
