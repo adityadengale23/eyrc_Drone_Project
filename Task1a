@@ -1,0 +1,156 @@
+import argparse
+import cv2 as cv
+import numpy as np
+import sys
+
+#Creating parser
+parser = argparse.ArgumentParser()
+
+#adding image arguments
+parser.add_argument('--image',required=True,help='Path for image to use in detection')
+
+#parse arguments
+args = parser.parse_args()
+
+#read the image
+img= cv.imread(args.image)
+
+if img is None:
+    print(f"FATAL ERROR: Image file not found or failed to load from path:{args.image}",file=sys.stderr)
+    with open('output.txt','w') as file:
+        file.write("detected marker IDS:[]\n")
+        file.write("Error: Input image file not found or failed to load.\n")
+    sys.exit(1)
+
+#clockwise 90 degree 
+rotated= cv.rotate(img,cv.ROTATE_90_CLOCKWISE) 
+
+#converting to grayscale
+gray = cv.cvtColor(rotated, cv.COLOR_BGR2GRAY)
+
+#detecting aruco markers 
+aruco_dict = cv.aruco.getPredefinedDictionary(cv.aruco.DICT_4X4_100)
+parameters = cv.aruco.DetectorParameters_create()
+corners,ids,rejected = cv.aruco.detectMarkers(gray,aruco_dict,parameters=parameters)
+
+#giving names to plants by pixel values
+block_1 = {
+    'A': (54, 55),
+    'B': (48, 110),
+    'C': (50, 187),
+    'D': (176, 55),
+    'E': (180, 123),
+    'F': (176, 181),
+}
+
+block_2 = {
+    'A': (54, 55),
+    'B': (48, 110),
+    'C': (50, 187),
+    'D': (176, 55),
+    'E': (180, 123),
+    'F': (176, 181),
+}
+
+#find plant ID
+def detect_infected_plants(mask, plant_position):
+    infected_ids = []
+    contours, _=cv.findContours(mask, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE)
+    #contours
+    for cnt in contours:
+        M = cv.moments(cnt)
+        if M['m00'] != 0 :
+            cx = int(M['m10']/M['m00'])
+            cy = int(M['m01']/M['m00'])
+            nearest_id = None
+            min_dist = float('inf')
+            for pid,(px,py) in plant_position.items():
+                dist = (px - cx)**2 + (py - cy)**2
+                if dist< min_dist:
+                    min_dist = dist
+                    nearest_id = pid
+            infected_ids.append(nearest_id)
+    return infected_ids
+
+
+#sorting aruco markers 
+if ids is not None and len(ids) == 4:
+
+    ids = ids.flatten()
+    #sorted in ascending order
+    sorted_indices = np.argsort(ids)
+    sorted_ids = ids[sorted_indices]
+    sorted_corners=[corners[i] for i in sorted_indices]
+
+    #Drawing detected markers in sorted order
+    cv.aruco.drawDetectedMarkers(rotated, sorted_corners,sorted_ids)
+
+    #corners of markers
+    src_pts = np.array([
+        sorted_corners[0][0][0], #top-left corner of first marker
+        sorted_corners[1][0][1], #top-right corner of second marker
+        sorted_corners[2][0][2], #bottom-right corner of thirf marker
+        sorted_corners[3][0][3], #bottom-left corner of fourth marker
+    ], dtype = 'float32')
+ 
+    #calculating widht and height
+    widthA = np.linalg.norm(src_pts[0] - src_pts[1])
+    widthB = np.linalg.norm(src_pts[2] - src_pts[3])
+    width = int(max(widthA, widthB))
+    #height
+    heightA = np.linalg.norm(src_pts[0]- src_pts[3])
+    heightB = np.linalg.norm(src_pts[1]- src_pts[2])
+    height = int(max(heightA,heightB))
+
+
+    dst_pts = np.array([
+        [0,0],
+        [width-1,0],
+        [width-1, height-1],
+        [0, height-1] 
+    ], dtype='float32')
+
+    #persepective transofrm
+    M = cv.getPerspectiveTransform(src_pts,dst_pts)
+    #warpping rotated image
+    warped= cv.warpPerspective(rotated, M, (width, height))
+
+
+    #separating region of interest(ROI)
+    Block_1 = warped[452:684, 74:306]
+    Block_2 = warped[452:684, 452:682]
+
+    #coverting to hsv
+    hsv1= cv.cvtColor(Block_1, cv.COLOR_BGR2HSV)#Block 1
+    hsv2= cv.cvtColor(Block_2, cv.COLOR_BGR2HSV)#Block 2
+
+    #Hihest and lowest hsv values of infected plant
+    lower_value = np.array([21, 230,7])
+    higher_value = np.array([23, 255, 125])
+
+    #masking infected plants
+    mask1 = cv.inRange(hsv1, lower_value, higher_value)
+    mask2 = cv.inRange(hsv2, lower_value, higher_value)
+
+    #detect infected plants
+    infected_block1 = detect_infected_plants(mask1,block_1)
+    infected_block2 = detect_infected_plants(mask2,block_2)
+
+    #opens file in write mode and writes aruco IDS and infected Plant IDS
+    with open('output.txt', 'w') as file:
+        file.write(f"Detected marker IDs: [{', '.join(map(str, sorted_ids))}]\n")
+        if infected_block1:
+            file.write(f"Infected plant in Block 1: P1{infected_block1[0]}\n")
+    
+        if infected_block2:
+            file.write(f"Infected plant in Block 2: P2{infected_block2[0]}\n")
+
+else:
+    print(f"Error: Expected 4 markers, but found{0 if ids is None else len(ids)}. cannot perform perspective transform",file=sys.stderr)
+
+    with open('output.txt','w')as file:
+        file.write("Detected marker IDS:[]\n")
+        file.write("Error: Missing required markers for perspective transform. check image and dictionary type.\n")
+
+cv.waitKey(0)
+cv.destroyAllWindows()
